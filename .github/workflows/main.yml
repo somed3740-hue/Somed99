@@ -14,12 +14,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Extraire le zip du projet (si le repo contient un .zip)
+      - name: Extraire l'archive du projet (zip, mÃªme sans extension .zip)
         run: |
-          for z in *.zip; do
-            [ -f "$z" ] || continue
-            mkdir -p app
-            unzip -q -o "$z" -d app || { echo "ZIP CORROMPU: $z - taille $(stat -c%s "$z") octets"; exit 1; }
+          ls -la
+          for f in *; do
+            [ -f "$f" ] || continue
+            if unzip -tqq "$f" > /dev/null 2>&1; then
+              echo "Archive dÃ©tectÃ©e : $f"
+              mkdir -p app
+              unzip -q -o "$f" -d app
+            fi
           done
 
       - name: Trouver le dossier du projet (celui qui contient package.json)
