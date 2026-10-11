@@ -1,0 +1,100 @@
+name: Build APK SOMED VTC
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extraire le zip du projet (si le repo contient un .zip)
+        run: |
+          for z in *.zip; do
+            [ -f "$z" ] || continue
+            mkdir -p app
+            unzip -q -o "$z" -d app || { echo "ZIP CORROMPU: $z - taille $(stat -c%s "$z") octets"; exit 1; }
+          done
+
+      - name: Trouver le dossier du projet (celui qui contient package.json)
+        run: |
+          PKG=$(find . -maxdepth 3 -name package.json -not -path '*/node_modules/*' -not -path './.git/*' | awk '{print length, $0}' | sort -n | head -n1 | cut -d' ' -f2-)
+          if [ -z "$PKG" ]; then
+            echo "Aucun package.json trouvÃ© dans le repo"; ls -R | head -50; exit 1
+          fi
+          APP_DIR=$(dirname "$PKG")
+          echo "Dossier du projet : $APP_DIR"
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      # Capacitor 6 nÃ©cessite Java 17
+      - name: Setup Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Accepter les licences Android SDK (SDK prÃ©installÃ© sur le runner)
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Installer les dÃ©pendances
+        working-directory: ${{ env.APP_DIR }}
+        run: bun install
+
+      - name: Build web (Vite)
+        working-directory: ${{ env.APP_DIR }}
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          VITE_GOOGLE_MAPS_API_KEY: ${{ secrets.VITE_GOOGLE_MAPS_API_KEY }}
+        run: bun run build
+
+      # On remplace capacitor.config.ts par un .json Ã©quivalent (Ã©vite les soucis de chargement TypeScript)
+      - name: Configurer Capacitor
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          rm -f capacitor.config.ts
+          cat > capacitor.config.json <<'JSON'
+          {
+            "appId": "com.somed.vtc",
+            "appName": "SOMED",
+            "webDir": "dist",
+            "server": { "androidScheme": "https" }
+          }
+          JSON
+
+      - name: Ajouter la plateforme Android
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          npx cap add android
+          npx cap sync android
+
+      - name: Permissions (localisation)
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          sed -i 's#</manifest>#    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />\n    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />\n</manifest>#' $MANIFEST
+
+      - name: Build APK debug
+        working-directory: ${{ env.APP_DIR }}/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Publier l'APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: somed-vtc-apk
+          path: ${{ env.APP_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
