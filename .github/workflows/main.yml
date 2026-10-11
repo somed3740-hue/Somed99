@@ -36,6 +36,18 @@ jobs:
           echo "Dossier du projet : $APP_DIR"
           echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
 
+      # Corrections du code source (fichiers tronquÃ©s / virgule manquante Ã  l'export)
+      - name: Corriger les erreurs de syntaxe du code
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          # DriverView.tsx : virgule manquante aprÃ¨s FileText dans l'import lucide-react
+          sed -i 's/^  FileText$/  FileText,/' src/components/Driver/DriverView.tsx
+          # AdminView.tsx : fichier tronquÃ©, il manque les balises/accolades de fin
+          F=src/components/Admin/AdminView.tsx
+          if ! tail -n 4 "$F" | grep -q '^};\?$'; then
+            printf '      </div>\n    </div>\n  );\n};\n' >> "$F"
+          fi
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
